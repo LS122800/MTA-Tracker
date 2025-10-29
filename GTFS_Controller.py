@@ -1,26 +1,25 @@
 import requests
-from google.transit.gtfs_realtime_pb2 import FeedMessage, FeedHeader, FeedEntity
+import gtfs_realtime_pb2
 import time
 from typing import Optional
+from station_mapping import StationMapping
 
 class MTAGTFSController:
-    def __init__(self, api_key: str):
+    def __init__(self):
         """
-        Initialize the MTA GTFS Controller
-        
-        Args:
-            api_key (str): Your MTA API key
+        Initialize the MTA GTFS Controller for the G line
         """
-        self.api_key = api_key
         self.base_url = "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-g"
         self.headers = {
-            "x-api-key": self.api_key,
             "Accept": "application/x-protobuf"
         }
+        # Initialize and load station mapping
+        self.station_mapping = StationMapping()
+        self.station_mapping.download_and_process_gtfs()
 
     def fetch_realtime_data(self) -> Optional[gtfs_realtime_pb2.FeedMessage]:
         """
-        Fetch real-time GTFS data from the MTA API
+        Fetch real-time GTFS data from the MTA API for the G line
         
         Returns:
             FeedMessage: Parsed protobuf message containing real-time transit data
@@ -38,6 +37,7 @@ class MTAGTFSController:
                 return feed
             else:
                 print(f"Error: Received status code {response.status_code}")
+                print(f"Response: {response.text}")
                 return None
                 
         except requests.exceptions.RequestException as e:
@@ -47,9 +47,9 @@ class MTAGTFSController:
             print(f"Error parsing feed: {e}")
             return None
 
-    def process_feed(self, feed: gtfs_realtime_pb2.FeedMessage) -> None:
+    def display_train_positions(self, feed: gtfs_realtime_pb2.FeedMessage) -> None:
         """
-        Process and display the feed data
+        Display current train positions from the feed
         
         Args:
             feed (FeedMessage): The parsed GTFS feed message
@@ -58,58 +58,35 @@ class MTAGTFSController:
             print("No feed data to process")
             return
 
-        print(f"Feed timestamp: {time.ctime(feed.header.timestamp)}")
+        print(f"\nFeed timestamp: {time.ctime(feed.header.timestamp)}")
         
         for entity in feed.entity:
-            if entity.HasField('trip_update'):
-                self._process_trip_update(entity.trip_update)
-            elif entity.HasField('vehicle'):
-                self._process_vehicle_position(entity.vehicle)
-            elif entity.HasField('alert'):
-                self._process_alert(entity.alert)
-
-    def _process_trip_update(self, trip_update) -> None:
-        """Process trip update information"""
-        trip = trip_update.trip
-        print(f"\nTrip ID: {trip.trip_id}")
-        print(f"Route ID: {trip.route_id}")
-        
-        for stop_time_update in trip_update.stop_time_update:
-            arrival = time.ctime(stop_time_update.arrival.time) if stop_time_update.HasField('arrival') else 'N/A'
-            departure = time.ctime(stop_time_update.departure.time) if stop_time_update.HasField('departure') else 'N/A'
-            print(f"Stop ID: {stop_time_update.stop_id}")
-            print(f"  Arrival: {arrival}")
-            print(f"  Departure: {departure}")
-
-    def _process_vehicle_position(self, vehicle) -> None:
-        """Process vehicle position information"""
-        print(f"\nVehicle Position:")
-        print(f"Trip ID: {vehicle.trip.trip_id}")
-        print(f"Current Stop ID: {vehicle.stop_id}")
-        print(f"Current Status: {vehicle.current_status}")
-        if vehicle.HasField('position'):
-            print(f"Position: Lat {vehicle.position.latitude}, Lon {vehicle.position.longitude}")
-
-    def _process_alert(self, alert) -> None:
-        """Process alert information"""
-        print("\nAlert:")
-        for text in alert.header_text.translation:
-            print(f"Header: {text.text}")
-        for text in alert.description_text.translation:
-            print(f"Description: {text.text}")
-
+            if entity.HasField('vehicle'):
+                vehicle = entity.vehicle
+                trip_id = vehicle.trip.trip_id if vehicle.HasField('trip') else 'N/A'
+                stop_id = vehicle.stop_id if vehicle.HasField('stop_id') else 'N/A'
+                
+                status = vehicle.current_status
+                status_mapping = {
+                    0: "approaching",
+                    1: "stopped at",
+                    2: "en route to"
+                }
+                status_str = status_mapping.get(status, "location undetermined")
+                
+                station_name = self.station_mapping.get_station_name(stop_id)
+                print(f"\nTrain ID: {trip_id}")
+                print(f"Status: {status_str} {station_name}")
+                print(f"Stop ID: {stop_id}")
 
 def main():
-    # Replace with your actual API key
-    API_KEY = "YOUR_API_KEY_HERE"
-    
     # Initialize the controller
-    controller = MTAGTFSController(API_KEY)
+    controller = MTAGTFSController()
     
-    # Fetch and process the data
+    # Fetch and display the data
     feed = controller.fetch_realtime_data()
     if feed:
-        controller.process_feed(feed)
+        controller.display_train_positions(feed)
     else:
         print("Failed to fetch GTFS data")
 
